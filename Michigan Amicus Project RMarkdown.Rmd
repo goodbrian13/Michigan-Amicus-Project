@@ -1,0 +1,285 @@
+---
+title: "Michigan Amicus Project"
+output:
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r, load packages, include = FALSE}
+library(readODS)
+library(dplyr)
+library(tidytext)
+library(tidyr)
+library(stringr)
+library(scales)
+library(ggplot2)
+library(igraph)
+library(ggraph)
+library(wordcloud)
+library(wesanderson)
+library(widyr)
+library(textdata)
+library(interactions)
+library(ggthemes)
+library(readr)
+library(rmarkdown)
+library(knitr)
+library(magrittr)
+
+```
+
+
+```{r, load data, include=FALSE}
+amicus <- read_ods(path="C:/Users/goodb/Desktop/Michigan Amicus Project/Michigan Amicus Project.ods", col_names=TRUE)
+amicus2 <- read_ods(path="C:/Users/goodb/Desktop/Michigan Amicus Project/Michigan Amicus Project 2.ods", col_names=TRUE)
+amtext <- rbind(amicus, amicus2)
+
+```
+
+
+**Data Transformation**
+
+Transforming amicus briefs into tokens to be analyzed. With stop words being removed, there are approximately 1.3 million words used though 420 Amicus Briefs. Most words are fairly generic, but that should not be entirely surprising considering that all briefs have been submitted to the Michigan Supreme Court. In the graph, the top 15 words from amicus briefs are shown. Numerical values have been removed from the graph.
+
+
+```{r, include=FALSE, message=FALSE}
+clean <- amtext %>% unnest_tokens(word, Amicus_Text) %>% mutate(linenumber = row_number())
+clean <- clean %>% anti_join(stop_words)
+
+```
+
+
+```{r, echo=FALSE, message=FALSE}
+clean %>% count(word, sort=TRUE)
+```
+
+
+```{r, echo=FALSE}
+clean %>% count(word, sort=TRUE) %>% top_n(15) %>% filter(!str_detect(word, "\\d")) %>% mutate(word = reorder(word, n)) %>% ggplot(aes(word, n)) + geom_col() + xlab(NULL) + coord_flip() + labs(title="Top 15 Words That Appear in Amicus Briefs", subtitle="Michigan State Supreme Court Cases, 2008-2016") + ylab("Total Appearance of Word") + theme_bw()
+
+```
+
+
+**Word Frequenices**
+
+The frequencies of words does not vary much by different amicus filers. When grouped by the group that filed an amicus brief, the frequencies are reflective of the groups that file most frequently. Frequencies are based on the total words contained in the analysis (approximately 1.3m), so when the Attorney General uses the word "court" 86,970 times, the frequency is the percentage of times that the Attorney General uses the word "court" among all 1.3m word usages throughout all the amicus briefs in this analysis.
+
+
+```{r include=FALSE, message=FALSE}
+total <- clean %>% count(word, Amicus_Name, sort=TRUE)
+total_words <- total %>% group_by(Amicus_Name) %>% summarize(total=sum(n))
+total_words <- left_join(total, total_words)
+total_freq <- total_words %>% group_by(Amicus_Name) %>% mutate(rank=row_number(), 'term frequency' = n/total)
+
+```
+
+```{r echo=FALSE}
+total_freq
+```
+
+```{r, include=FALSE}
+total_freq$Frequency <- as.numeric(total_freq$'term frequency')
+rank_subset <- total_freq %>% filter(rank < 150, rank > 10)
+lm(log10(`term frequency`) ~ log10(rank), data = rank_subset)
+```
+The words that are used by amici follow a similar path when ranking word usages. A word like "court" is ranked "1". However, as shown, the word variety used by amici is vast. Some filers will use approximately 10,000 unique words across all the briefs that they file. The dotted red line is the slope of the rank based on the actual frequency of the words at given ranks. 
+
+```{r echo=FALSE}
+total_freq %>% ggplot(aes(rank, Frequency)) + geom_abline(intercept=-1.2388, slope=-0.7563, color="red", linetype=2) + geom_line(size = 1.1, alpha = 0.8, show.legend = FALSE) + scale_x_log10() + scale_y_log10() + theme_bw() + labs(title="Mapping the Frequency of Words", subtitle="All amici included.\nRank indicates words with highest usages.")
+```
+
+
+**Bigrams**
+
+Bigrams present the directionality of words that appear within amicus briefs. In the Michigan Supreme Court, amicus filers will use word pairs like "trial court", "amicus curiae", and "common law" with relative frequency. Each of these word pairs would be a single bigram. 
+
+When only looking at bigrams that appear 180 times across all narratives, the word pairs reveal common legal jargon that would appear to support an argument or claim within court. However, there is strong indication that specific pairs are tied to specific areas of law. For example, "reasonable doubt" is likely tied to criminal procedings in which the burden of evidence must be proved beyond a "reasonable doubt". Yet, other themematic bigrams appear as well like "real property" or "medical malpractice". To a certain degree, bigrams can highlight various trends and patterns among cases appearing before the Michigan Supreme Court. 
+
+
+```{r include=FALSE}
+bigram <- amtext %>% unnest_tokens(bigram, Amicus_Text, token="ngrams", n=2)
+bigram %>% count(bigram, sort=TRUE)
+```
+
+```{r, echo=FALSE}
+big_sep <- bigram %>% separate(bigram, c("word1", "word2"), sep=" ")
+big_fil <- big_sep %>% filter(!word1 %in% stop_words$word) %>% filter(!word2 %in% stop_words$word) %>% filter(!str_detect(word1, "\\d"), !str_detect(word2, "\\d"))
+big_counts <- big_fil %>% count(word1, word2, sort=TRUE)
+big_counts
+
+```
+
+
+```{r echo=FALSE, fig.height=10, fig.width=10}
+big_graph <- big_counts %>% filter(n >180) %>% graph_from_data_frame()
+set.seed(2016)
+a <- grid::arrow(type = "closed", length = unit(.15, "inches"))
+ggraph(big_graph, layout="fr") + geom_edge_link(aes(edge_alpha = n), show.legend=FALSE, arrow = a, end_cap = circle(.07, 'inches')) + geom_node_point(color="lightblue", size=5) + geom_node_text(aes(label=name), vjust=1, hjust=1) + theme_void() + labs(title="Bigrams Present within Amicus Briefs", subtitle="Bigrams appearing at least 180 times together")
+
+```
+
+**Word Correlations**
+
+Similar to bigrams, word correlations focus on pairs of words. However, unlike bigrams, word correlations do not care as much about directionality. Word correlations only care about how frequently two words appear together. In the situation of word correlations the words "zoning" and "ordinance" are connected. While it is likely that the bigram would be "zoning ordinance", word correlations do not care if it reads "zoning ordinance" or "ordinance zoning". All that matters is that the words are connected in some way. 
+
+Word correlations provide more information about the types of cases that appear before the Michigan Supreme Court than bigrams. In the lower left of the figure, many terms are connected, yet there is a trend of cases dealing with damages. In general, there appears to be many different torts that are being litigated in the Michigan Supreme Court, ranging from medical malpractice, liability claims, and potentially workplace claims. On the far right of the figure, issues tied to marijuana appear (in some of the earlier cases marijuana was frequently spelled wrong). In both civil and criminal cases, marjiuana issues drew significant amicus attention. However, the word correlations highlight that cases that appear before the Michigan Supreme Court touch on both possession (criminal case) as well as concerns of medical marijuana usage (civil cases). While other legal matters appear, the word correlations also point to the language that amici use to bolster their claims, ranging from legislative, statuory, and constitutional matters.
+
+
+```{r, echo=FALSE, error=FALSE, warning=FALSE, fig.width=10, fig.height=10}
+
+clean_totals <- clean %>% count(word, sort=TRUE) %>% filter(!str_detect(word, "\\d"))
+word_cors <- clean %>% group_by(word) %>% filter(n() > 500) %>% filter(!str_detect(word, "\\d")) %>% ungroup %>% pairwise_cor(word, Amicus_Name, sort=TRUE)
+filtered_cors <- word_cors %>% filter(correlation > 0.47, item1 %in% clean_totals$word, item2 %in% clean_totals$word) %>% filter(correlation <= 1, item1 %in% clean_totals$word, item2 %in% clean_totals$word)
+vertices <- clean_totals %>% filter(word %in% filtered_cors$item1)
+set.seed(1234)
+filtered_cors %>% graph_from_data_frame(vertices=vertices) %>% ggraph(layout="fr") + geom_edge_link(aes(edge_alpha = correlation), width=2) + geom_node_point(aes(size=n), color="cyan4") + geom_node_text(aes(label=name), repel=TRUE, point.padding = unit(0.3, "lines"), family="RobotoCondensed-Regular") + theme_graph(base_family="RobotoCondensed-Regular") + theme(plot.title=element_text(family="Roboto-Bold")) + scale_size_continuous(range=c(1, 15)) + labs(size="Number of uses", edge_alpha = "Correlation", title = "Word correlations in Amicus Curiae", subtitle="Which words are more likely to occur together than other words")
+
+```
+
+
+**Word Positions**
+
+The position of words can provide insight into the overall structure of amicus briefs. There are two primary ways that words can be sorted to show their location. First, they can be sorted to show which words are more likely to show up at the beginning or end of the amicus brief. Second, words that are over-represented at specific points in the text can be mapped. 
+
+In the first, figure the top 15 words that are shifted to both the beginning and end of an amicus brief is shown. It is clear that certain words might be used more at either the beginning or end of a narrative. A word like "statement" is very likely to show up in the beginning of an amicus brief, while "respectfully" is almostly guaranteed to show up at the very end of an amicus brief (unsurprising since many briefs end with a "respectfully, <insert lawyer name here>"). 
+
+```{r, echo=FALSE}
+plot_words <- amtext %>% unnest_tokens(word, Amicus_Text) %>% filter(!str_detect(word, "\\d"))
+word_averages <- plot_words %>% group_by(DocketNo, Amicus_Name) %>% mutate(word_position=row_number() / n()) %>% group_by(word) %>% summarize(median_position = median(word_position), number = n())
+word_averages %>% filter(number >= 250) %>% arrange(median_position)
+start_end_words <- word_averages %>% filter(number >= 250) %>% arrange(desc(median_position)) %>% slice(c(1:15, n():(n()-14)))
+start_end_words %>% mutate(word=reorder(word, -median_position), direction = ifelse(median_position < .5, "Beginning", "End")) %>% ggplot(aes(median_position, word, color=direction)) + geom_point(size=5) + geom_errorbarh(aes(xmin=.5, xmax=median_position), height=0) + geom_vline(xintercept = .5, lty=2) + scale_x_continuous(labels = scales::percent_format()) + expand_limits(x=c(0,1)) + labs(x="Median position of word within Amicus Curiae", y="", title="Words most shifted toward the beginning or end of Amicus Curiae", subtitle="Words with at least 250 uses", color="")
+
+
+```
+
+Another way to show where words show up in a amicus brief is mapping the word's specific location throughout the entirity of an amicis brief. Much like the figure above, the figure below is able to map out specific locations of words through a text. A word like "association" is likely to show up near the beginning and end, but is more slightly more likely towards the beginning of a brief. Yet, "landlord" usages peaks near the middle of a brief, but is fairly common throughout amicus briefs. 
+
+```{r, echo=FALSE, fig.height=8, fig.width=10}
+decile_counts <- plot_words %>% group_by(DocketNo, Amicus_Name) %>% mutate(word_position = row_number() / n()) %>% ungroup() %>% mutate(decile = ceiling(word_position * 10) / 10) %>% count(decile, word)
+decile_counts %>% inner_join(start_end_words, by="word") %>% mutate(word=reorder(word, median_position)) %>% ggplot(aes(decile, n/ number)) + geom_line() + facet_wrap(~word) + scale_x_continuous(labels = scales::percent_format()) + scale_y_continuous(labels = scales::percent_format()) + geom_hline(yintercept=.1, color="red", lty=2) + theme(panel.grid.major=element_blank(), panel.grid.minor = element_blank()) + labs(x="Position within a Amicus Curiae", y="Percentage of word's appearances", title="Words within a Amicus Curiae", subtitle="Words that occurred at least 250 times that were shifted toward the beginning or end of the Amicus Curiae")
+
+```
+
+Rather than focusing on either the beginning or end of an amicus brief, more information can be gathered by breaking up an amicus brief into more sections. In this example, each brief is broken into deciles (10 percent increments). For every brief, regardless of length, each decile is compared across every amicus brief. The words appear are words that are most over-represented in the specific decile. For example, the words "line", "jurors", "tenancy", "distinction", "waiver", "areas", "payments", and "original" are over-represented in the sixth decile. In other words, about 60 percent of the way through any amicus brief, these words would be more likely to appear than any other part of the brief. 
+
+```{r, echo=FALSE, fig.height=8, fig.width=14}
+peak_decile <- decile_counts %>% inner_join(word_averages, by = "word") %>% filter(number >= 250) %>% transmute(peak_decile = decile, word, number, fraction_peak=n/number) %>% arrange(desc(fraction_peak)) %>% distinct(word, .keep_all = TRUE)
+peak_decile %>% group_by(percent = reorder(percent(peak_decile), peak_decile)) %>% top_n(8, fraction_peak) %>% ungroup() %>% mutate(word = reorder(word, fraction_peak)) %>% ggplot(aes(word, fraction_peak, fill=peak_decile)) + geom_col(show.legend=FALSE) + geom_hline(yintercept = .1, color="red", lty = 2) + coord_flip() + facet_wrap(~percent, nrow=2, scales="free_y") + scale_y_continuous(labels=percent_format()) + theme(panel.grid.major = element_blank()) + labs(x = "", y = "Percentatge of word's appearances that occur in this decile", title="Words that characterize each part of a Amcius Curiae", subtitle="The Eight words in each decile that are most over-represented at that part of the story.\nThe vertical dashed line marks 10%, which would represent a word that is equally likely anywhere in a Amicus Curiae.")
+```
+
+
+In the figure beloew, it takes the same information from the previous figure, but takes the top 3 over-represented words from deciles 2 - 9 and maps their location through the entirity of an amicus brief. For each word, there is a fair amount of fluctuation between its peak and other points. A word like "dictionary" peaks fairly early in a brief, before showing up semi-frequently towards the end of a brief. 
+
+
+```{r, echo=FALSE, fig.height=8, fig.width=10}
+peak_decile %>% filter(peak_decile > .1, peak_decile < 1) %>% group_by(peak_decile) %>% top_n(3, fraction_peak) %>% ungroup() %>% inner_join(decile_counts, by = "word") %>% mutate(word=reorder(word, peak_decile + 0.001 * fraction_peak)) %>% ggplot(aes(decile, n / number, color=word)) + geom_line(show.legend=FALSE, size=1) + geom_hline(lty = 2, yintercept = .1, alpha=.5) + facet_wrap(~word, ncol=6) + scale_x_continuous(labels=percent_format()) + scale_y_continuous(labels=percent_format()) + expand_limits(y=0) + theme(panel.grid.minor=element_blank(), panel.grid.major = element_blank()) + labs(x="Position within a story's plot", y="Percentage of word's appearances", title="Words used at particular points of an Amicus Brief", subtitle="Includes words that appeared at 250 times, showing three most overrepresented at each decile.\nThe horizontal dashed line marks 10%, which would represent a word that is equally likely anywhere in a story.")
+```
+
+
+**Sentiment Analysis**
+
+Sentiment analysis is a way to conceptualize text as either positive or negative. To conduct this analysis, I am primarily using the AFINN lexicon, which ranks words on a -5 to +5 scale, where -5 is most negative and +5 is most positive. When all 420 amicus briefs are analyzed in this project, language usage is slightly negative (dropping to a low of about -0.3). However, one thing to consider is that sentiment analysis is unable to discern the context that words are used in. For example, if a negative word such as "kill" appears in a brief for a murder case, the word will be treated as negative. However, if "kill" appears in the context of "did not kill", "kill" would still be treated as negative. 
+
+```{r, echo=FALSE}
+decile_counts %>% inner_join(get_sentiments("afinn"), by = "word") %>% group_by(decile) %>% summarize(score = sum(value * n) / sum(n)) %>% ggplot(aes(decile, score)) + geom_line(size=1) + scale_x_continuous(labels=percent_format()) + expand_limits(y=0) + labs(x="Position within an Amicus Brief", y="Average AFINN Sentiment Score", title="Visualizing Sentiment Across All Amicus Briefs") + theme_bw()
+```
+
+
+
+Of course, looking at the sentiment of all amicus briefs does not reveal anything about the language usage of specific amicus filers. Looking at the language usage of the most frequently filing groups reveals fairly significant variation in language usage. When an Attorney General or the Prosecuting Attorney's Association of Michigan file a brief, they use the most negative language. Conversely, the Michigan Municipal League uses some of the most positive language. 
+
+
+```{r, echo=FALSE}
+afinn <- decile_counts %>% inner_join(get_sentiments("afinn"), by = "word") %>% group_by(decile) %>% summarize(score = sum(value * n) / sum(n))
+
+amtext %>% count(Amicus_Name, sort=TRUE)
+
+```
+
+```{r, echo=FALSE}
+
+decile_counts <- clean %>% group_by(DocketNo, Amicus_Name) %>% mutate(word_position = row_number () / n()) %>% ungroup() %>% mutate(decile=ceiling(word_position * 10)/10) %>% count(decile, word, Amicus_Name) %>% filter(Amicus_Name=='Michigan Association for Justice' | Amicus_Name=='Attorney General' | Amicus_Name=='Prosecuting Attorneys Association of Michigan' | Amicus_Name=='Michigan Municipal League' | Amicus_Name=='Michigan Defense Trial Counsel' | Amicus_Name=='Insurance Institute of Michigan' | Amicus_Name=='Coalition Protecting Auto No-Fault' | Amicus_Name=='Michigan Manufacturers Association')
+
+decile_counts %>% inner_join(get_sentiments("afinn"), by = "word") %>% group_by(decile, Amicus_Name) %>% summarize(score = sum(value * n) / sum(n)) %>% ggplot(aes(decile, score, col=Amicus_Name)) + geom_line(size=2) + scale_x_continuous(labels=percent_format()) + expand_limits(y=0) + labs(x="Position within an Amicus Brief", y="Average AFINN Sentiment Score", title="Visualizing Sentiment Across All Amicus Briefs", subtitle="Among amici that file the most within the Michigan Supreme Court.\nThe dotted black line is the average across all amicus briefs.") + geom_line(data=afinn, aes(decile, score), size=1.5, linetype=2, color="black") + theme_bw()
+```
+
+
+However, looking at groups by themselves hides the fact that different attorneys file briefs for the group. Consider, the Attorney General had to individuals in the position from 2008-2016: Michael A. Cox and Bill Schuette. Below, it shows that the language usage by both Attorney Generals is very different from one another. Michael A. Cox used very positive language, while Bill Schuette used more negative language. 
+
+
+```{r, echo=FALSE}
+
+decile_counts <- clean %>% group_by(DocketNo, Amicus_Name, Attorney_Name) %>% mutate(word_position = row_number () / n()) %>% ungroup() %>% mutate(decile=ceiling(word_position * 10)/10) %>% count(decile, word, Amicus_Name, Attorney_Name) %>% filter( Amicus_Name=='Attorney General' & Attorney_Name=="Bill Schuette" | Amicus_Name=='Attorney General' & Attorney_Name=="Michael A. Cox")
+
+decile_counts %>% inner_join(get_sentiments("afinn"), by = "word") %>% group_by(decile, Amicus_Name, Attorney_Name) %>% summarize(score = sum(value * n) / sum(n)) %>% ggplot(aes(decile, score, col=Attorney_Name)) + geom_line(size=2) + scale_x_continuous(labels=percent_format()) + expand_limits(y=0) + labs(x="Position within an Amicus Brief", y="Average AFINN Sentiment Score", title="Visualizing Sentiment Across Amicus Briefs Filed by Attorney Generals", subtitle="Comparing Attorney General Michael A. Cox and Bill Schuette.\nThe dotted black line is the average across all amicus briefs.") + geom_line(data=afinn, aes(decile, score), size=1.5, linetype=2, color="black") + theme_bw()
+
+
+```
+
+
+Consequently, when we view the language usage across some of the most frequent filing attorney's, regardless of group, actual language usage becomes a bit more clear. For the most part, attorney's use negative language. However, for Michael A. Cox, Richard C. Kraus, and Liisa R. Speaker, the language usage is noticeably more positive than other frequent, filing attorneys. 
+
+```{r, echo=FALSE}
+amtext %>% count(Attorney_Name, sort=TRUE)
+```
+
+
+
+```{r, echo=FALSE}
+decile_counts <- clean %>% group_by(DocketNo, Attorney_Name) %>% mutate(word_position = row_number () / n()) %>% ungroup() %>% mutate(decile=ceiling(word_position * 10)/10) %>% count(decile, word, Attorney_Name) %>% filter(Attorney_Name=="Bill Schuette" | Attorney_Name=="Kym L. Worthy" | Attorney_Name=="Mary M. Ross" | Attorney_Name=="Michael A. Cox" | Attorney_Name=="Gregory L. McClelland" | Attorney_Name =="Brian A. Peppler" | Attorney_Name == "Liisa R. Speaker" | Attorney_Name == "Richard C. Kraus")
+
+decile_counts %>% inner_join(get_sentiments("afinn"), by = "word") %>% group_by(decile, Attorney_Name) %>% summarize(score = sum(value * n) / sum(n)) %>% ggplot(aes(decile, score, col=Attorney_Name)) + geom_line(size=2) + scale_x_continuous(labels=percent_format()) + expand_limits(y=0) + labs(x="Position within an Amicus Brief", y="Average AFINN Sentiment Score", title="Visualizing Sentiment Across All Amicus Briefs", subtitle="Among lawyers who file most frequently.\nThe dotted black line is the average across all amicus briefs.") + geom_line(data=afinn, aes(decile, score), size=1.5, linetype=2, color="black") + theme_bw()
+
+```
+
+
+Beyond specifc actors, sentiment can also be analyzed across different grouping categories, such as which ligant's position the brief is filed on behalf of. When filing for an appellant or respondent, the language difference is not very significant. However, when a group chooses to not support either litigant, the language usage does appear to be different. However, in the sample of cases, there were not many filers supporting neither litigant, so this may skew the data. (Note: For support of Appellant or Responded, coding was conducted where if a case is "Party A v. Party B", Party A was the Appellant and Party B was the Respondent)
+
+
+```{r, echo=FALSE}
+
+decile_counts <- clean %>% group_by(DocketNo, Support) %>% mutate(word_position = row_number () / n()) %>% ungroup() %>% mutate(decile=ceiling(word_position * 10)/10) %>% count(decile, word, Support)
+
+decile_counts %>% inner_join(get_sentiments("afinn"), by = "word") %>% group_by(decile, Support) %>% summarize(score = sum(value * n) / sum(n)) %>% ggplot(aes(decile, score, col=Support)) + geom_line(size=2) + scale_x_continuous(labels=percent_format()) + expand_limits(y=0) + labs(x="Position within an Amicus Brief", y="Average AFINN Sentiment Score", title="Visualizing Sentiment Across All Amicus Briefs", subtitle="Among lawyers who file most frequently.\nThe dotted black line is the average across all amicus briefs.") + geom_line(data=afinn, aes(decile, score), size=1.5, linetype=2, color="black") + theme_bw()
+```
+
+**Gendered Analysis**
+
+Gendered word analysis uses bigrams at the core to determine which words are more like to come after specific words, such as "he" or "she". Gendered analysis is not perfect as the analysis does not include pronoun varients like "himself" or "herself", nor does it include sweeping pronouns like "they". Yet, it can still be interesting to look at which words are more likely to show up after "he" and "she" respectively. 
+
+In amicus briefs, "she" is more likely to have "suffered". "fails", and "needed". On the other hand, "he" is more likely to have "confessed", "contends", and "explained".
+
+```{r, include=FALSE}
+
+hot_bigrams <- amtext %>% unnest_tokens(bigram, Amicus_Text, token="ngrams", n=2, collapse=FALSE)
+hot_bigrams_separated <- hot_bigrams %>% separate(bigram, c("word1", "word2"), sep=" ")
+he_she_words <- hot_bigrams_separated %>% filter(word1 %in% c("he", "she"))
+
+
+```
+
+```{r, echo=FALSE}
+he_she_counts <- he_she_words %>% count(word1, word2) %>% spread(word1, n, fill=0) %>% mutate(total=he+she, he = (he+1) / sum(he + 1), she = (she+1) / sum(she+1), log_ratio = log2(she/he), abs_ratio=abs(log_ratio)) %>% arrange(desc(log_ratio))
+he_she_counts %>% filter(!word2 %in% c("himself", "herself", "she"), total >= 5) %>% group_by(direction = ifelse(log_ratio >0, 'More "she"', "More 'he'")) %>% top_n(15, abs_ratio) %>% ungroup() %>% mutate(word2=reorder(word2, log_ratio)) %>% ggplot(aes(word2, log_ratio, fill=direction)) + geom_col() + coord_flip() + labs(x="", y='Relative appearance after "she" compared to "he"', fill = "", title = "Words correlated with 'He' or 'She' in Amicus Curiae", subtitle="Words with at least 5 uses after he/she, 12 most shewed in each direction") + scale_y_continuous(labels = c("8x", "6x", "4x", "2x", "Same", "2x", "4x", "6x"), breaks=seq(-4, 3)) + guides(fill = guide_legend(reverse=TRUE))
+
+```
+
+The figure below is another example of how to map gendered word usage. It is not surprising that common linking verbs like "is", "was", and "had" are most commonly used words and are not strongly steered towards "he" or "she". The word "or" is the one outlier in the figure. However, this is likely tied to frequently usages of the phrase "he or she"
+
+```{r, echo=FALSE, fig.width=14, fig.height=8}
+he_she_counts %>% filter(!word2 %in% c("himself", "herself", "she"), total >= 5) %>% ggplot(aes(total, log_ratio)) + geom_point() + scale_x_log10(breaks = c(1, 10, 100, 1000, 10000, 1e5), labels=comma_format()) + geom_text(aes(label = word2), vjust=1, hjust=1, check_overlap=TRUE) + scale_y_continuous(breaks = seq(-4, 3), labels = c('8x "He"','6x "He"', '4X "He"', '2x "He', "Same", '2X "She"', '4X "She"', '6x "She"')) + labs(x='Total uses after "he" or "she"', y='Relative uses after "she" to after "she"', title="Gendered Words: Mapping Relative Frequencies", subtitle="Only words occuring at least 5 times after he/she. Overlapping labels were removed") + expand_limits(x=75)
+
+```
+
+To get a more nuanced view of words showing up after "he" and "she" respectively, words can be selected. The words selected have stronger action connotations. The words were chosen by looking at the total frequency of the word usage. In this context, "she" is more likely to have "suffered", "fails", and "covets". On the other hand, "he" is most likely to have "confessed", "explained" and "committed". This figure also shows how the tense of a specific word matters. "She" is most likely to "fails", while "he" is mostly likely to have "failed". 
+
+
+```{r, echo=FALSE}
+he_she_counts %>% filter(word2 %in% c("suffered", "testified", "sustained", "committed", "explained", "believed", "engaged", "accepted", "covets", "refused", "caused", "failed", "redeemed", "refrained", "suffers", "survived", "argued", "admitted", "fails", "believes", "confessed")) %>% group_by(direction=ifelse(log_ratio > 0, 'More "she"', "More 'He'")) %>% ungroup() %>% mutate(word2=reorder(word2, log_ratio)) %>% ggplot(aes(word2, log_ratio, fill=direction)) + geom_col() + coord_flip() + labs(x="", y='Relative appearance after "she" compared to "he"', fill="", titled = "Words correlated with 'He' or 'She' in Amicus Curiae", subtitle="Selected words used in Amicus Briefs") + guides(fill=guide_legend(reverse=TRUE)) + scale_y_continuous(labels = c("8x", "6x", "4x", "2x", "Same", "2x", "4x", "6x"), breaks=seq(-4, 3))
+```
+
