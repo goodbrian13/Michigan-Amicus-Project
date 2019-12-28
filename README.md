@@ -1,3 +1,3 @@
 #Michigan Amicus Project
 
-[![INSERT YOUR GRAPHIC HERE](https://imgur.com/XzuWuj5)]()
+[![Word Frequencies](https://i.imgur.com/XzuWuj5.png)]()
