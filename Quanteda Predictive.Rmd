@@ -1,0 +1,70 @@
+---
+title: "Quanteda and Predictive Analysis"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, load packages, include = FALSE}
+library(readODS)
+library(dplyr)
+library(tidytext)
+library(tidyr)
+library(stringr)
+library(scales)
+library(ggplot2)
+library(igraph)
+library(ggraph)
+library(wordcloud)
+library(wesanderson)
+library(widyr)
+library(textdata)
+library(interactions)
+library(ggthemes)
+library(readr)
+library(rmarkdown)
+library(knitr)
+library(magrittr)
+library(quanteda)
+library(caret)
+library(e1071)
+
+```
+
+
+```{r, load data, include=FALSE}
+amicus <- read_ods(path="C:/Users/goodb/Desktop/Michigan Amicus Project/Michigan Amicus Project.ods", col_names=TRUE)
+amicus2 <- read_ods(path="C:/Users/goodb/Desktop/Michigan Amicus Project/Michigan Amicus Project 2.ods", col_names=TRUE)
+amtext <- rbind(amicus, amicus2)
+```
+
+
+```{r, echo=FALSE}
+
+amtext$text <- amtext$Amicus_Text
+corp <- corpus(amtext)
+
+set.seed(300)
+id_train <- sample(1:420, 210, replace = FALSE)
+
+docvars(corp, "id_numeric") <- 1:ndoc(corp)
+
+dfm_train <- corpus_subset(corp, id_numeric %in% id_train) %>% dfm(remove_punct=TRUE, tolower=TRUE, remove=stopwords("english"))
+dfm_test <- corpus_subset(corp, !id_numeric %in% id_train) %>% dfm(remove_punct=TRUE, tolower=TRUE, remove=stopwords("english"))
+
+model_nb <- textmodel_nb(dfm_train, docvars(dfm_train, "Support"))
+summary(tmod_nb)
+
+dfmat_matched <- dfm_match(dfm_test, features = featnames(dfm_train))
+
+
+actual_class <- docvars(dfmat_matched, "Support")
+predicted_class <- predict(model_nb, newdata = dfmat_matched)
+tab_class <- table(actual_class, predicted_class)
+tab_class
+
+
+
+```
